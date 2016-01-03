@@ -1,10 +1,11 @@
 import logging
+import inspect
 import importlib
 import multiprocessing
 
 
 class PluginRunner(multiprocessing.Process):
-    def __init__(self, plugin_module, event_queue, result_queue):
+    def __init__(self, plugin_info, event_queue, result_queue):
         super(PluginRunner, self).__init__()
 
         # Terminate the plugin if the plugin manager terminates
@@ -15,15 +16,44 @@ class PluginRunner(multiprocessing.Process):
 
         # Import the specified plugin module and create the interface back to
         # the main process
-        self.module = importlib.import_module(plugin_module)
+        self.name = plugin_info[0]
+        self.module = importlib.import_module(plugin_info[1])
+
         self.interface = PluginInterface(event_queue, result_queue)
 
+    def _is_plugin(self, obj):
+        """Returns whether a given object is a class extending Plugin"""
+        return inspect.isclass(obj) and Plugin in obj.__bases__
+
+    def _find_plugin(self):
+        cls = None
+        for name, obj in inspect.getmembers(self.module, self._is_plugin):
+            cls = obj
+            break
+
+        if cls is None:
+            raise PluginNotFoundError("Unable to find a Plugin class (a class "
+                                      "subclassing pplugins.plugins.Plugin)",
+                                      self.name)
+
+        return cls
+
     def run(self):
+        """Instantiates the first Plugin subclass in the plugin's module"""
         try:
-            self.module.start(self.interface)
+            cls = self._find_plugin()
+        except LookupError:
+            self.logger.exception("Unable to find a valid plugin class in %s" %
+                                  self.module_name)
+            # FIXME: Pass error result back to Cardinal
+            return
+
+        try:
+            cls(self.interface)
         except Exception:
             self.logger.exception("Error starting plugin")
             # FIXME: Pass error result back to Cardinal
+            return
 
 
 class Plugin(object):
@@ -33,12 +63,12 @@ class Plugin(object):
         self.loop()
 
     def loop(self):
-        print "child, Looping"
+        print("child, Looping")
 
         while True:
             event = self.interface.get_event()
             if event is None:
-                print "child, Exiting"
+                print("child, Exiting")
                 break
 
 
@@ -58,23 +88,23 @@ class PluginManager(object):
             'test': 'plugins.test.plugin'
         }
 
-    def start_plugin(self, plugin):
+    def start_plugin(self, name):
         """Attempt to start a new plugin"""
         self.reap_plugins()
 
         # Don't run two instances of the same plugin
-        if plugin in self.plugins:
-            raise PluginError("Plugin is already running", plugin)
+        if name in self.plugins:
+            raise PluginError("Plugin is already running", name)
 
         # Make sure we can find the plugin first
         plugins = self.find_plugins()
-        if plugin not in plugins:
-            raise PluginError("Unable to find plugin", plugin)
+        if name not in plugins:
+            raise PluginError("Unable to find plugin", name)
 
-        self.logger.info("Starting plugin %s" % plugin)
+        self.logger.info("Starting plugin %s" % name)
 
         data = {
-            'name': plugin,
+            'name': name,
 
             # Create an input and output queue
             'events': multiprocessing.Queue(),
@@ -83,16 +113,17 @@ class PluginManager(object):
 
         try:
             data['process'] = PluginRunner(
-                plugins[plugin], data['events'], data['messages'])
+                (name, plugins[name]), data['events'], data['messages'])
         except Exception:
             self.logger.exception("Unable to create plugin process")
             return False
 
         data['process'].start()
 
-        self.plugins[plugin] = data
+        self.logger.info("Started plugin %s" % name)
+        self.plugins[name] = data
 
-        self.logger.info("Started plugin %s" % plugin)
+        return True
 
     def stop_plugin(self, plugin):
         self.reap_plugins()
@@ -100,6 +131,7 @@ class PluginManager(object):
         if plugin not in self.plugins:
             # FIXME: Throw an exception so calling class can handle?
             self.logger.info("Plugin %s isn't running" % plugin)
+            return
 
         # Send signal to shutdown
         # FIXME: Make this a PluginEvent?
@@ -156,8 +188,14 @@ class PluginError(Exception):
     def __init__(self, message, plugin):
         super(PluginError, self).__init__(message, plugin)
 
+        self.plugin = plugin
+
     def __str__(self):
-        return "%s (%s)" % (self.args[0], self.args[1])
+        return "%s (plugin: %s)" % (self.args[0], self.plugin)
+
+
+class PluginNotFoundError(PluginError):
+    pass
 
 
 class PluginInterface(object):
