@@ -3,73 +3,7 @@ import inspect
 import importlib
 import multiprocessing
 
-
-class PluginRunner(multiprocessing.Process):
-    def __init__(self, plugin_info, event_queue, result_queue):
-        super(PluginRunner, self).__init__()
-
-        # Terminate the plugin if the plugin manager terminates
-        self.daemon = True
-
-        # FIXME: Use something process-safe
-        self.logger = logging.getLogger(__name__)
-
-        # Import the specified plugin module and create the interface back to
-        # the main process
-        self.name = plugin_info[0]
-        self.module = importlib.import_module(plugin_info[1])
-
-        self.interface = PluginInterface(event_queue, result_queue)
-
-    def _is_plugin(self, obj):
-        """Returns whether a given object is a class extending Plugin"""
-        return inspect.isclass(obj) and Plugin in obj.__bases__
-
-    def _find_plugin(self):
-        cls = None
-        for name, obj in inspect.getmembers(self.module, self._is_plugin):
-            cls = obj
-            break
-
-        if cls is None:
-            raise PluginNotFoundError("Unable to find a Plugin class (a class "
-                                      "subclassing pplugins.plugins.Plugin)",
-                                      self.name)
-
-        return cls
-
-    def run(self):
-        """Instantiates the first Plugin subclass in the plugin's module"""
-        try:
-            cls = self._find_plugin()
-        except LookupError:
-            self.logger.exception("Unable to find a valid plugin class in %s" %
-                                  self.module_name)
-            # FIXME: Pass error result back to Cardinal
-            return
-
-        try:
-            cls(self.interface)
-        except Exception:
-            self.logger.exception("Error starting plugin")
-            # FIXME: Pass error result back to Cardinal
-            return
-
-
-class Plugin(object):
-    def __init__(self, interface):
-        self.interface = interface
-
-        self.loop()
-
-    def loop(self):
-        print("child, Looping")
-
-        while True:
-            event = self.interface.get_event()
-            if event is None:
-                print("child, Exiting")
-                break
+from pplugins.exceptions import (PluginError, PluginNotFoundError)
 
 
 class PluginManager(object):
@@ -184,18 +118,73 @@ class PluginManager(object):
             yield (name, plugin)
 
 
-class PluginError(Exception):
-    def __init__(self, message, plugin):
-        super(PluginError, self).__init__(message, plugin)
+class PluginRunner(multiprocessing.Process):
+    def __init__(self, plugin_info, event_queue, result_queue):
+        super(PluginRunner, self).__init__()
 
-        self.plugin = plugin
+        # Terminate the plugin if the plugin manager terminates
+        self.daemon = True
 
-    def __str__(self):
-        return "%s (plugin: %s)" % (self.args[0], self.plugin)
+        # FIXME: Use something process-safe
+        self.logger = logging.getLogger(__name__)
+
+        # Import the specified plugin module and create the interface back to
+        # the main process
+        self.name = plugin_info[0]
+        self.module = importlib.import_module(plugin_info[1])
+
+        self.interface = PluginInterface(event_queue, result_queue)
+
+    def _is_plugin(self, obj):
+        """Returns whether a given object is a class extending Plugin"""
+        return inspect.isclass(obj) and Plugin in obj.__bases__
+
+    def _find_plugin(self):
+        cls = None
+        for name, obj in inspect.getmembers(self.module, self._is_plugin):
+            cls = obj
+            break
+
+        if cls is None:
+            raise PluginNotFoundError("Unable to find a Plugin class (a class "
+                                      "subclassing pplugins.plugins.Plugin)",
+                                      self.name)
+
+        return cls
+
+    def run(self):
+        """Instantiates the first Plugin subclass in the plugin's module"""
+        try:
+            cls = self._find_plugin()
+        except LookupError:
+            self.logger.exception("Unable to find a valid plugin class in %s" %
+                                  self.module_name)
+            # FIXME: Pass error result back to Cardinal
+            return
+
+        try:
+            cls(self.interface)
+        except Exception:
+            self.logger.exception("Error starting plugin")
+            # FIXME: Pass error result back to Cardinal
+            return
 
 
-class PluginNotFoundError(PluginError):
-    pass
+class Plugin(object):
+    def __init__(self, interface):
+        self.interface = interface
+
+        self.loop()
+
+    def loop(self):
+        """This should be overridden by the Plugin"""
+        print("child, Looping")
+
+        while True:
+            event = self.interface.get_event()
+            if event is None:
+                print("child, Exiting")
+                break
 
 
 class PluginInterface(object):
