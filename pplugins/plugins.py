@@ -2,20 +2,21 @@ import logging
 import inspect
 import importlib
 import multiprocessing
+from abc import abstractmethod
 
 from pplugins.exceptions import (PluginError, PluginNotFoundError)
 
 
 class PluginInterface(object):
-    def __init__(self, event_queue, result_queue):
+    def __init__(self, event_queue, message_queue):
         self.event_queue = event_queue
-        self.result_queue = result_queue
+        self.message_queue = message_queue
 
-    def add_result(self, result):
-        self.result_queue.put(result)
+    def add_message(self, result):
+        self.message_queue.put(result)
 
-    def get_event(self):
-        return self.event_queue.get()
+    def get_event(self, block=True, timeout=None):
+        return self.event_queue.get(block, timeout)
 
 
 class PluginRunner(multiprocessing.Process):
@@ -37,6 +38,12 @@ class PluginRunner(multiprocessing.Process):
         self.interface = self.interface(event_queue, result_queue)
 
     def _load_plugin(self):
+        """Returns the module the Plugin subclass lives in.
+
+        This method may be overriden by subclasses to adjust how a plugin's
+        module is found. By default, we assume it lives in a module named
+        <name>_plugin.
+        """
         return importlib.import_module("%s_plugin" % self.plugin)
 
     def _is_plugin(self, obj):
@@ -44,6 +51,11 @@ class PluginRunner(multiprocessing.Process):
         return inspect.isclass(obj) and Plugin in obj.__bases__
 
     def _find_plugin(self):
+        """Returns the first Plugin subclass in the plugin module.
+
+        Raises:
+            PluginNotFoundError -- If no subclass of Plugin is found.
+        """
         cls = None
         for name, obj in inspect.getmembers(self.module, self._is_plugin):
             cls = obj
@@ -86,7 +98,11 @@ class PluginManager(object):
         self.plugins = {}
 
     def start_plugin(self, name):
-        """Attempt to start a new plugin"""
+        """Attempt to start a new process-based plugin.
+
+        Keyword arguments:
+            name -- Plugin name to start.
+        """
         self.reap_plugins()
 
         # Don't run two instances of the same plugin
@@ -116,40 +132,52 @@ class PluginManager(object):
         self.plugins[name] = data
 
     def stop_plugin(self, name):
+        """Stops a plugin process. Tries cleanly, forcefully, then gives up.
+
+        Keyword arguments:
+            name -- Plugin name to stop.
+        """
         self.reap_plugins()
 
+        self.logger.info("Stopping plugin %s" % name)
+
         if name not in self.plugins:
-            # FIXME: Throw an exception so calling class can handle?
             self.logger.info("Plugin %s isn't running" % name)
             return
 
-        # Time to wait for process to cleanup
-        wait_time = 10
-
-        # Attempt to send clean shutdown signal to plugin
-        self.logger.info("Waiting up to %s seconds for plugin %s to shutdown" %
-                         (wait_time, name))
-        # FIXME: Make this a PluginEvent?
-        self.plugins[name]['events'].put(None)
-        self.plugins[name]['process'].join(wait_time)
+        # Try cleanly shutting it down
+        self._stop_plugin(name)
 
         # Make sure it died or send SIGTERM
         if self.plugins[name]['process'].is_alive():
             self.logger.info("Forcefully killing plugin %s (SIGTERM)" % name)
             self.plugins[name]['process'].terminate()
 
-            self.logger.info("Waiting up to %s seconds for plugin %s to die" %
-                             (wait_time, name))
+            self.logger.info(
+                    "Waiting up to 10 seconds for plugin %s to die" % name)
 
         # Make sure plugin is definitely dead now, or just ignore it
-        self.plugins[name]['process'].join(wait_time)
+        self.plugins[name]['process'].join(10)
         if self.plugins[name]['process'].is_alive():
-            self.logger.error("Unable to kill plugin %s -- ignoring it" %
-                              name)
+            self.logger.error(
+                    "Unable to kill plugin %s -- ignoring it" % name)
         else:
             self.logger.info("Successfully shut down plugin %s" % name)
 
         del self.plugins[name]
+
+    def _stop_plugin(self, name):
+        """Attempts to cleanly shut down a plugin.
+
+        This method may be overridden by subclasses to send a different signal
+        or adjust the timeout to a desirable duration.
+        """
+        # Attempt to send clean shutdown signal to plugin
+        self.logger.info(
+                "Waiting up to 10 seconds for plugin %s to shutdown" % name)
+
+        self.plugins[name]['events'].put(None)
+        self.plugins[name]['process'].join(10)
 
     def process_messages(self):
         """Handles any messages from children"""
@@ -157,7 +185,18 @@ class PluginManager(object):
 
         for plugin in self.plugins:
             while not plugin['messages'].empty():
-                self.process_message(plugin['messages'].get())
+                self._process_message(plugin['name'], plugin['messages'].get())
+
+    def _process_message(self, plugin, message):
+        """This method should be overridden by subclasses.
+
+        Processes a message from a plugin.
+
+        Keyword argument:
+            plugin -- The name of the plugin that sent the message
+            message -- Could be any pickle-able object sent from the plugin
+        """
+        raise NotImplementedError("Subclasses must implement _process_message()")
 
     def reap_plugins(self):
         """Reaps any children processes that terminated"""
@@ -181,14 +220,10 @@ class Plugin(object):
     def __init__(self, interface):
         self.interface = interface
 
-        self.loop()
+        # Plugins should implement the run() method
+        self.run()
 
-    def loop(self):
-        """This should be overridden by the Plugin"""
-        print("child, Looping")
-
-        while True:
-            event = self.interface.get_event()
-            if event is None:
-                print("child, Exiting")
-                break
+    @abstractmethod
+    def run(self):
+        """This method should be overridden by the Plugin."""
+        pass
