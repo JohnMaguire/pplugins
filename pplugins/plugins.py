@@ -19,11 +19,28 @@ class PluginInterface(object):
         return self.event_queue.get(block, timeout)
 
 
+class Plugin(object):
+    def __init__(self, interface):
+        self.interface = interface
+
+        # Plugins should implement the run() method
+        self.run()
+
+    @abstractmethod
+    def run(self):
+        """This method must be overridden by the plugin."""
+        pass
+
+
 class PluginRunner(multiprocessing.Process):
     interface = PluginInterface
 
+    plugin_class = Plugin
+
     def __init__(self, plugin, event_queue, result_queue):
         super(PluginRunner, self).__init__()
+
+        self.plugin = plugin
 
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
@@ -31,24 +48,19 @@ class PluginRunner(multiprocessing.Process):
         # FIXME: Use something process-safe
         self.logger = logging.getLogger(__name__)
 
-        # Import the specified plugin module and create the interface back to
-        # the main process
-        self.plugin = plugin
-        self.module = self._load_plugin()
         self.interface = self.interface(event_queue, result_queue)
 
+    @abstractmethod
     def _load_plugin(self):
-        """Returns the module the Plugin subclass lives in.
+        """This method must be overridden to return a Python module.
 
-        This method may be overriden by subclasses to adjust how a plugin's
-        module is found. By default, we assume it lives in a module named
-        <name>_plugin.
+        A Plugin class should exist in the module returned by this method.
         """
-        return importlib.import_module("%s_plugin" % self.plugin)
+        pass
 
     def _is_plugin(self, obj):
         """Returns whether a given object is a class extending Plugin"""
-        return inspect.isclass(obj) and Plugin in obj.__bases__
+        return inspect.isclass(obj) and self.plugin_class in obj.__bases__
 
     def _find_plugin(self):
         """Returns the first Plugin subclass in the plugin module.
@@ -56,27 +68,23 @@ class PluginRunner(multiprocessing.Process):
         Raises:
             PluginNotFoundError -- If no subclass of Plugin is found.
         """
+        module = self._load_plugin()
+
         cls = None
-        for name, obj in inspect.getmembers(self.module, self._is_plugin):
+        for name, obj in inspect.getmembers(module, self._is_plugin):
             cls = obj
             break
 
         if cls is None:
             raise PluginNotFoundError("Unable to find a Plugin class (a class "
-                                      "subclassing pplugins.plugins.Plugin)",
-                                      self.name)
+                                      "subclassing %s)" % self.plugin_class,
+                                      self.plugin)
 
         return cls
 
     def run(self):
         """Instantiates the first Plugin subclass in the plugin's module"""
-        try:
-            cls = self._find_plugin()
-        except LookupError:
-            self.logger.exception("Unable to find a valid plugin class in %s" %
-                                  self.module_name)
-            # FIXME: Pass error result back to Cardinal
-            return
+        cls = self._find_plugin()
 
         try:
             cls(self.interface)
@@ -166,18 +174,10 @@ class PluginManager(object):
 
         del self.plugins[name]
 
+    @abstractmethod
     def _stop_plugin(self, name):
-        """Attempts to cleanly shut down a plugin.
-
-        This method may be overridden by subclasses to send a different signal
-        or adjust the timeout to a desirable duration.
-        """
-        # Attempt to send clean shutdown signal to plugin
-        self.logger.info(
-                "Waiting up to 10 seconds for plugin %s to shutdown" % name)
-
-        self.plugins[name]['events'].put(None)
-        self.plugins[name]['process'].join(10)
+        """This method must be overridden to send a clean shutdown signal."""
+        pass
 
     def process_messages(self):
         """Handles any messages from children"""
@@ -214,16 +214,3 @@ class PluginManager(object):
                 continue
 
             yield (name, plugin)
-
-
-class Plugin(object):
-    def __init__(self, interface):
-        self.interface = interface
-
-        # Plugins should implement the run() method
-        self.run()
-
-    @abstractmethod
-    def run(self):
-        """This method should be overridden by the Plugin."""
-        pass
