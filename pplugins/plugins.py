@@ -19,7 +19,7 @@ class PluginManager(object):
         """Finds all available plugins"""
         # FIXME: Find plugins
         return {
-            'test': 'plugins.test.plugin'
+           'example': 'example_plugin'
         }
 
     def start_plugin(self, name):
@@ -33,7 +33,7 @@ class PluginManager(object):
         # Make sure we can find the plugin first
         plugins = self.find_plugins()
         if name not in plugins:
-            raise PluginError("Unable to find plugin", name)
+            raise PluginNotFoundError("Unable to find plugin", name)
 
         self.logger.info("Starting plugin %s" % name)
 
@@ -50,47 +50,48 @@ class PluginManager(object):
                 (name, plugins[name]), data['events'], data['messages'])
         except Exception:
             self.logger.exception("Unable to create plugin process")
-            return False
+            raise
 
         data['process'].start()
 
         self.logger.info("Started plugin %s" % name)
         self.plugins[name] = data
 
-        return True
-
-    def stop_plugin(self, plugin):
+    def stop_plugin(self, name):
         self.reap_plugins()
 
-        if plugin not in self.plugins:
+        if name not in self.plugins:
             # FIXME: Throw an exception so calling class can handle?
-            self.logger.info("Plugin %s isn't running" % plugin)
+            self.logger.info("Plugin %s isn't running" % name)
             return
 
-        # Send signal to shutdown
-        # FIXME: Make this a PluginEvent?
+        # Time to wait for process to cleanup
         wait_time = 10
 
+        # Attempt to send clean shutdown signal to plugin
         self.logger.info("Waiting up to %s seconds for plugin %s to shutdown" %
-                         (wait_time, plugin))
-        self.plugins[plugin]['events'].put(None)
-        self.plugins[plugin]['process'].join(wait_time)
+                         (wait_time, name))
+        # FIXME: Make this a PluginEvent?
+        self.plugins[name]['events'].put(None)
+        self.plugins[name]['process'].join(wait_time)
 
-        if self.plugins[plugin]['process'].is_alive():
-            self.logger.info("Forcefully killing plugin %s (SIGTERM)" % plugin)
-            self.plugins[plugin]['process'].terminate()
+        # Make sure it died or send SIGTERM
+        if self.plugins[name]['process'].is_alive():
+            self.logger.info("Forcefully killing plugin %s (SIGTERM)" % name)
+            self.plugins[name]['process'].terminate()
 
             self.logger.info("Waiting up to %s seconds for plugin %s to die" %
-                             (wait_time, plugin))
+                             (wait_time, name))
 
-        self.plugins[plugin]['process'].join(wait_time)
-        if self.plugins[plugin]['process'].is_alive():
+        # Make sure plugin is definitely dead now, or just ignore it
+        self.plugins[name]['process'].join(wait_time)
+        if self.plugins[name]['process'].is_alive():
             self.logger.error("Unable to kill plugin %s -- ignoring it" %
-                              plugin)
+                              name)
         else:
-            self.logger.info("Successfully shutdown plugin %s" % plugin)
+            self.logger.info("Successfully shut down plugin %s" % name)
 
-        del self.plugins[plugin]
+        del self.plugins[name]
 
     def process_messages(self):
         """Handles any messages from children"""
