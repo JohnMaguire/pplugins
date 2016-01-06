@@ -6,22 +6,84 @@ import multiprocessing
 from pplugins.exceptions import (PluginError, PluginNotFoundError)
 
 
-class PluginManager(object):
-    """Finds, launches, and stops plugins"""
+class PluginInterface(object):
+    def __init__(self, event_queue, result_queue):
+        self.event_queue = event_queue
+        self.result_queue = result_queue
 
-    def __init__(self, finder):
-        if not callable(finder):
-            raise TypeError("finder parameter must be a callable")
+    def add_result(self, result):
+        self.result_queue.put(result)
+
+    def get_event(self):
+        return self.event_queue.get()
+
+
+class PluginRunner(multiprocessing.Process):
+    interface = PluginInterface
+
+    def __init__(self, plugin, event_queue, result_queue):
+        super(PluginRunner, self).__init__()
+
+        # Terminate the plugin if the plugin manager terminates
+        self.daemon = True
 
         # FIXME: Use something process-safe
         self.logger = logging.getLogger(__name__)
 
+        # Import the specified plugin module and create the interface back to
+        # the main process
+        self.plugin = plugin
+        self.module = self._load_plugin()
+        self.interface = self.interface(event_queue, result_queue)
+
+    def _load_plugin(self):
+        return importlib.import_module("%s_plugin" % self.plugin)
+
+    def _is_plugin(self, obj):
+        """Returns whether a given object is a class extending Plugin"""
+        return inspect.isclass(obj) and Plugin in obj.__bases__
+
+    def _find_plugin(self):
+        cls = None
+        for name, obj in inspect.getmembers(self.module, self._is_plugin):
+            cls = obj
+            break
+
+        if cls is None:
+            raise PluginNotFoundError("Unable to find a Plugin class (a class "
+                                      "subclassing pplugins.plugins.Plugin)",
+                                      self.name)
+
+        return cls
+
+    def run(self):
+        """Instantiates the first Plugin subclass in the plugin's module"""
+        try:
+            cls = self._find_plugin()
+        except LookupError:
+            self.logger.exception("Unable to find a valid plugin class in %s" %
+                                  self.module_name)
+            # FIXME: Pass error result back to Cardinal
+            return
+
+        try:
+            cls(self.interface)
+        except Exception:
+            self.logger.exception("Error starting plugin")
+            # FIXME: Pass error result back to Cardinal
+            return
+
+
+class PluginManager(object):
+    """Finds, launches, and stops plugins"""
+
+    plugin_runner = PluginRunner
+
+    def __init__(self):
+        # FIXME: Use something process-safe
+        self.logger = logging.getLogger(__name__)
+
         self.plugins = {}
-
-        self.finder = finder
-
-    def find_plugins(self):
-        return self.finder()
 
     def start_plugin(self, name):
         """Attempt to start a new plugin"""
@@ -30,11 +92,6 @@ class PluginManager(object):
         # Don't run two instances of the same plugin
         if name in self.plugins:
             raise PluginError("Plugin is already running", name)
-
-        # Make sure we can find the plugin first
-        plugins = self.find_plugins()
-        if name not in plugins:
-            raise PluginNotFoundError("Unable to find plugin", name)
 
         self.logger.info("Starting plugin %s" % name)
 
@@ -47,8 +104,8 @@ class PluginManager(object):
         }
 
         try:
-            data['process'] = PluginRunner(
-                (name, plugins[name]), data['events'], data['messages'])
+            data['process'] = self.plugin_runner(
+                name, data['events'], data['messages'])
         except Exception:
             self.logger.exception("Unable to create plugin process")
             raise
@@ -120,58 +177,6 @@ class PluginManager(object):
             yield (name, plugin)
 
 
-class PluginRunner(multiprocessing.Process):
-    def __init__(self, plugin_info, event_queue, result_queue):
-        super(PluginRunner, self).__init__()
-
-        # Terminate the plugin if the plugin manager terminates
-        self.daemon = True
-
-        # FIXME: Use something process-safe
-        self.logger = logging.getLogger(__name__)
-
-        # Import the specified plugin module and create the interface back to
-        # the main process
-        self.name = plugin_info[0]
-        self.module = importlib.import_module(plugin_info[1])
-
-        self.interface = PluginInterface(event_queue, result_queue)
-
-    def _is_plugin(self, obj):
-        """Returns whether a given object is a class extending Plugin"""
-        return inspect.isclass(obj) and Plugin in obj.__bases__
-
-    def _find_plugin(self):
-        cls = None
-        for name, obj in inspect.getmembers(self.module, self._is_plugin):
-            cls = obj
-            break
-
-        if cls is None:
-            raise PluginNotFoundError("Unable to find a Plugin class (a class "
-                                      "subclassing pplugins.plugins.Plugin)",
-                                      self.name)
-
-        return cls
-
-    def run(self):
-        """Instantiates the first Plugin subclass in the plugin's module"""
-        try:
-            cls = self._find_plugin()
-        except LookupError:
-            self.logger.exception("Unable to find a valid plugin class in %s" %
-                                  self.module_name)
-            # FIXME: Pass error result back to Cardinal
-            return
-
-        try:
-            cls(self.interface)
-        except Exception:
-            self.logger.exception("Error starting plugin")
-            # FIXME: Pass error result back to Cardinal
-            return
-
-
 class Plugin(object):
     def __init__(self, interface):
         self.interface = interface
@@ -187,15 +192,3 @@ class Plugin(object):
             if event is None:
                 print("child, Exiting")
                 break
-
-
-class PluginInterface(object):
-    def __init__(self, event_queue, result_queue):
-        self.event_queue = event_queue
-        self.result_queue = result_queue
-
-    def add_result(self, result):
-        self.result_queue.put(result)
-
-    def get_event(self):
-        return self.event_queue.get()
