@@ -9,18 +9,19 @@ from pplugins.exceptions import (PluginError, PluginNotFoundError)
 class PluginManager(object):
     """Finds, launches, and stops plugins"""
 
-    def __init__(self):
+    def __init__(self, finder):
+        if not callable(finder):
+            raise TypeError("finder parameter must be a callable")
+
         # FIXME: Use something process-safe
         self.logger = logging.getLogger(__name__)
 
         self.plugins = {}
 
+        self.finder = finder
+
     def find_plugins(self):
-        """Finds all available plugins"""
-        # FIXME: Find plugins
-        return {
-           'example': 'example_plugin'
-        }
+        return self.finder()
 
     def start_plugin(self, name):
         """Attempt to start a new plugin"""
