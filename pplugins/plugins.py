@@ -1,25 +1,37 @@
 import logging
 import inspect
-import importlib
 import multiprocessing
 from abc import abstractmethod
 
-from pplugins.exceptions import (PluginError, PluginNotFoundError)
+
+class PluginError(Exception):
+    """Custom Exception class to store plugin name with exception"""
+    def __init__(self, message, plugin):
+        super(PluginError, self).__init__(message, plugin)
+
+        self.plugin = plugin
+
+    def __str__(self):
+        return "%s (plugin: %s)" % (self.args[0], self.plugin)
 
 
 class PluginInterface(object):
+    """Facilitates communication between the plugin and the parent process"""
     def __init__(self, event_queue, message_queue):
         self.event_queue = event_queue
         self.message_queue = message_queue
 
     def add_message(self, result):
+        """Sends a message to the parent to process -- see Queue.put()"""
         self.message_queue.put(result)
 
     def get_event(self, block=True, timeout=None):
+        """Receives an event from the parent -- see Queue.get()"""
         return self.event_queue.get(block, timeout)
 
 
 class Plugin(object):
+    """Abstract class for plugins to implement"""
     def __init__(self, interface):
         self.interface = interface
 
@@ -33,9 +45,13 @@ class Plugin(object):
 
 
 class PluginRunner(multiprocessing.Process):
+    """Finds and runs a plugin. Entry point to the child process."""
+
     interface = PluginInterface
+    """Interface class to instantiate and pass to the plugin"""
 
     plugin_class = Plugin
+    """Plugin class which must be subclassed by plugins"""
 
     def __init__(self, plugin, event_queue, result_queue):
         super(PluginRunner, self).__init__()
@@ -66,19 +82,19 @@ class PluginRunner(multiprocessing.Process):
         """Returns the first Plugin subclass in the plugin module.
 
         Raises:
-            PluginNotFoundError -- If no subclass of Plugin is found.
+            PluginError -- If no subclass of Plugin is found.
         """
         module = self._load_plugin()
 
         cls = None
-        for name, obj in inspect.getmembers(module, self._is_plugin):
+        for _, obj in inspect.getmembers(module, self._is_plugin):
             cls = obj
             break
 
         if cls is None:
-            raise PluginNotFoundError("Unable to find a Plugin class (a class "
-                                      "subclassing %s)" % self.plugin_class,
-                                      self.plugin)
+            raise PluginError("Unable to find a Plugin class (a class "
+                              "subclassing %s)" % self.plugin_class,
+                              self.plugin)
 
         return cls
 
@@ -117,7 +133,7 @@ class PluginManager(object):
         if name in self.plugins:
             raise PluginError("Plugin is already running", name)
 
-        self.logger.info("Starting plugin %s" % name)
+        self.logger.info("Starting plugin %s", name)
 
         data = {
             'name': name,
@@ -136,7 +152,7 @@ class PluginManager(object):
 
         data['process'].start()
 
-        self.logger.info("Started plugin %s" % name)
+        self.logger.info("Started plugin %s", name)
         self.plugins[name] = data
 
     def stop_plugin(self, name):
@@ -147,10 +163,10 @@ class PluginManager(object):
         """
         self.reap_plugins()
 
-        self.logger.info("Stopping plugin %s" % name)
+        self.logger.info("Stopping plugin %s", name)
 
         if name not in self.plugins:
-            self.logger.info("Plugin %s isn't running" % name)
+            self.logger.info("Plugin %s isn't running", name)
             return
 
         # Try cleanly shutting it down
@@ -158,19 +174,19 @@ class PluginManager(object):
 
         # Make sure it died or send SIGTERM
         if self.plugins[name]['process'].is_alive():
-            self.logger.info("Forcefully killing plugin %s (SIGTERM)" % name)
+            self.logger.info("Forcefully killing plugin %s (SIGTERM)", name)
             self.plugins[name]['process'].terminate()
 
             self.logger.info(
-                    "Waiting up to 10 seconds for plugin %s to die" % name)
+                "Waiting up to 10 seconds for plugin %s to die", name)
 
         # Make sure plugin is definitely dead now, or just ignore it
         self.plugins[name]['process'].join(10)
         if self.plugins[name]['process'].is_alive():
             self.logger.error(
-                    "Unable to kill plugin %s -- ignoring it" % name)
+                "Unable to kill plugin %s -- ignoring it", name)
         else:
-            self.logger.info("Successfully shut down plugin %s" % name)
+            self.logger.info("Successfully shut down plugin %s", name)
 
         del self.plugins[name]
 
@@ -210,7 +226,7 @@ class PluginManager(object):
         for name, plugin in self.plugins.items():
             # Don't add dead processes to our new plugin list
             if not plugin['process'].is_alive():
-                self.logger.warning("Plugin %s has terminated itself" % name)
+                self.logger.warning("Plugin %s has terminated itself", name)
                 continue
 
             yield (name, plugin)
