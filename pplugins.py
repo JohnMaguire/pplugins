@@ -212,7 +212,8 @@ class PluginManager(object):
             plugin -- The name of the plugin that sent the message
             message -- Could be any pickle-able object sent from the plugin
         """
-        raise NotImplementedError("Subclasses must implement _process_message()")
+        raise NotImplementedError(
+            "Subclasses must implement _process_message()")
 
     def reap_plugins(self):
         """Reaps any children processes that terminated"""

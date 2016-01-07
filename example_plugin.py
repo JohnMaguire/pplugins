@@ -1,10 +1,12 @@
 import time
 import Queue
 
-from pplugins.plugins import Plugin
+from pplugins import Plugin
+
 
 class ExamplePlugin(Plugin):
     """Don't do anything special"""
+
     def run(self):
         print("Child, started!")
 
