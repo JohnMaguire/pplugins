@@ -1,7 +1,8 @@
 import logging
 import inspect
+import threading
 import multiprocessing
-from abc import abstractmethod
+from abc import ABCMeta, abstractmethod
 
 
 class PluginError(Exception):
@@ -32,6 +33,9 @@ class PluginInterface(object):
 
 class Plugin(object):
     """Abstract class for plugins to implement"""
+
+    __metaclass__ = ABCMeta
+
     def __init__(self, interface):
         self.interface = interface
 
@@ -47,13 +51,15 @@ class Plugin(object):
 class PluginRunner(multiprocessing.Process):
     """Finds and runs a plugin. Entry point to the child process."""
 
+    __metaclass__ = ABCMeta
+
     interface = PluginInterface
     """Interface class to instantiate and pass to the plugin"""
 
     plugin_class = Plugin
     """Plugin class which must be subclassed by plugins"""
 
-    def __init__(self, plugin, event_queue, result_queue):
+    def __init__(self, plugin, event_queue, result_queue, log_queue):
         super(PluginRunner, self).__init__()
 
         self.plugin = plugin
@@ -61,10 +67,24 @@ class PluginRunner(multiprocessing.Process):
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
 
-        # FIXME: Use something process-safe
-        self.logger = logging.getLogger(__name__)
+        # Monkey patch logging so we can log correctly from plugins
+        self.__monkey_patch_logging(log_queue)
 
+        self.logger = logging.getLogger(__name__)
         self.interface = self.interface(event_queue, result_queue)
+
+    @staticmethod
+    def __monkey_patch_logging(log_queue):
+        ProcessLogger.log_queue = log_queue
+
+        # Set the logger class for future loggers
+        logging.setLoggerClass(ProcessLogger)
+
+        # Monkey patch existing loggers
+        logging.root.__class__ = ProcessLogger
+        for logger in logging.Logger.manager.loggerDict.values():
+            if not isinstance(logger, logging.PlaceHolder):
+                logger.__class__ = ProcessLogger
 
     @abstractmethod
     def _load_plugin(self):
@@ -93,7 +113,7 @@ class PluginRunner(multiprocessing.Process):
 
         if cls is None:
             raise PluginError("Unable to find a Plugin class (a class "
-                              "subclassing %s)" % self.plugin_class,
+                              "subclassing %s)", self.plugin_class,
                               self.plugin)
 
         return cls
@@ -105,13 +125,13 @@ class PluginRunner(multiprocessing.Process):
         try:
             cls(self.interface)
         except Exception:
-            self.logger.exception("Error starting plugin")
-            # FIXME: Pass error result back to Cardinal
-            return
+            self.logger.exception("Error in plugin %s", self.plugin)
 
 
 class PluginManager(object):
     """Finds, launches, and stops plugins"""
+
+    __metaclass__ = ABCMeta
 
     plugin_runner = PluginRunner
 
@@ -120,6 +140,24 @@ class PluginManager(object):
         self.logger = logging.getLogger(__name__)
 
         self.plugins = {}
+
+        self.__start_logging_thread()
+
+    def __del__(self):
+        self.__stop_logging_thread()
+
+    def __start_logging_thread(self):
+        self.log_queue = multiprocessing.Queue()
+        self.log_thread = threading.Thread(target=ProcessLogger.daemon,
+                                           args=(self.log_queue,))
+
+        # Terminate the thread if the main process dies
+        self.log_thread.daemon = True
+
+        self.log_thread.start()
+
+    def __stop_logging_thread(self):
+        self.log_queue.put(None)
 
     def start_plugin(self, name):
         """Attempt to start a new process-based plugin.
@@ -145,7 +183,7 @@ class PluginManager(object):
 
         try:
             data['process'] = self.plugin_runner(
-                name, data['events'], data['messages'])
+                name, data['events'], data['messages'], self.log_queue)
         except Exception:
             self.logger.exception("Unable to create plugin process")
             raise
@@ -231,3 +269,53 @@ class PluginManager(object):
                 continue
 
             yield (name, plugin)
+
+
+class ProcessLogger(logging.Logger):
+    log_queue = None
+
+    def isEnabledFor(self, level):
+        """Accept records of any log level
+
+        logging.Logger will correctly filter out messages of the wrong log
+        level back in the parent process.
+        """
+        return True
+
+    def handle(self, record):
+        """Format the log record and send it through the queue
+
+        We format it here, instead of in the parent where the real logger
+        exists in order to prevent pickling issues over the queue.
+        """
+        # Get exception info into the log message now, so we don't have to
+        # worry about passing the exception info over the queue
+        if record.exc_info:
+            logging._defaultFormatter.format(record)
+            record.exc_info = None
+
+        # Similarly, parse any message arguments now
+        d = dict(record.__dict__)
+        d['msg'] = record.getMessage()
+        d['args'] = None
+
+        # Send the record's properties over the queue so we can log it
+        self.log_queue.put(d)
+
+    @staticmethod
+    def daemon(log_queue):
+        while True:
+            try:
+                record_data = log_queue.get()
+                if record_data is None:
+                    break
+
+                record = logging.makeLogRecord(record_data)
+
+                logger = logging.getLogger(record.name)
+                if logger.isEnabledFor(record.levelno):
+                    logger.handle(record)
+            except EOFError:
+                break
+            except Exception:
+                logging.exception("Error in log handler.")
