@@ -63,15 +63,12 @@ class PluginRunner(multiprocessing.Process):
         super(PluginRunner, self).__init__()
 
         self.plugin = plugin
+        self.event_queue = event_queue
+        self.result_queue = result_queue
+        self.log_queue = log_queue
 
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
-
-        # Monkey patch logging so we can log correctly from plugins
-        self.__monkey_patch_logging(log_queue)
-
-        self.logger = logging.getLogger(__name__)
-        self.interface = self.interface(event_queue, result_queue)
 
     @staticmethod
     def __monkey_patch_logging(log_queue):
@@ -120,6 +117,12 @@ class PluginRunner(multiprocessing.Process):
 
     def run(self):
         """Instantiates the first Plugin subclass in the plugin's module"""
+        # Monkey patch logging so we can log correctly from plugins
+        self.__monkey_patch_logging(self.log_queue)
+
+        self.logger = logging.getLogger(__name__)
+        self.interface = self.interface(self.event_queue, self.result_queue)
+
         cls = self._find_plugin()
 
         try:
