@@ -120,7 +120,6 @@ class PluginRunner(multiprocessing.Process):
         # Monkey patch logging so we can log correctly from plugins
         self.__monkey_patch_logging(self.log_queue)
 
-        self.logger = logging.getLogger(__name__)
         self.interface = self.interface(self.event_queue, self.result_queue)
 
         cls = self._find_plugin()
@@ -128,7 +127,8 @@ class PluginRunner(multiprocessing.Process):
         try:
             cls(self.interface)
         except Exception:
-            self.logger.exception("Error in plugin %s", self.plugin)
+            logging.getLogger(__name__).exception(
+                "Error running plugin %s", self.plugin)
 
 
 class PluginManager(object):
@@ -139,15 +139,29 @@ class PluginManager(object):
     plugin_runner = PluginRunner
 
     def __init__(self):
-        # FIXME: Use something process-safe
+        self.plugins = {}
         self.logger = logging.getLogger(__name__)
 
-        self.plugins = {}
-
+    def __enter__(self):
+        # Start a thread to manage plugin processes' loggers
         self.__start_logging_thread()
 
-    def __del__(self):
+        # Reap plugin processes every 5 seconds
+        self.reap_lock = threading.RLock()
+        self.__start_reaping_thread()
+
+        return self
+
+    def __exit__(self, type, value, traceback):
         self.__stop_logging_thread()
+        self.__stop_reaping_thread()
+
+    def __start_reaping_thread(self):
+        self.reap_timer = threading.Timer(5, self.reap_plugins)
+        self.reap_timer.start()
+
+    def __stop_reaping_thread(self):
+        self.reap_timer.cancel()
 
     def __start_logging_thread(self):
         self.log_queue = multiprocessing.Queue()
@@ -258,17 +272,20 @@ class PluginManager(object):
 
     def reap_plugins(self):
         """Reaps any children processes that terminated"""
-        # Create a new list for plugins that are still alive
-        self.plugins = {
-            name: plugin for name, plugin in self._living_plugins()
-        }
+        with self.reap_lock:
+            self.logger.debug("Reaping plugin processes")
+
+            # Create a new list for plugins that are still alive
+            self.plugins = {
+                name: plugin for name, plugin in self._living_plugins()
+            }
 
     def _living_plugins(self):
         """Checks all plugins to see if they're alive, yields living plugins"""
         for name, plugin in self.plugins.items():
             # Don't add dead processes to our new plugin list
             if not plugin['process'].is_alive():
-                self.logger.warning("Plugin %s has terminated itself", name)
+                self.logger.warning("Plugin %s terminated unexpectedly", name)
                 continue
 
             yield (name, plugin)

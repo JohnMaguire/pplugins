@@ -29,11 +29,10 @@ class MyPluginManager(pplugins.PluginManager):
 
 if __name__ == '__main__':
     # Get some output
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
 
-    manager = MyPluginManager()
-
-    # Example starting a plugin, wait 2 secs, stop it
-    manager.start_plugin('example')
-    time.sleep(2)
-    manager.stop_plugin('example')
+    with MyPluginManager() as manager:
+        # Example starting a plugin, wait 2 secs, stop it
+        manager.start_plugin('example')
+        time.sleep(15)
+        manager.stop_plugin('example')
