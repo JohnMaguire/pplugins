@@ -126,7 +126,7 @@ class PluginRunner(multiprocessing.Process):
 
         try:
             cls(self.interface)
-        except Exception:
+        except:
             logging.getLogger(__name__).exception(
                 "Error running plugin %s", self.plugin)
 
