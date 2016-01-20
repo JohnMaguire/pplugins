@@ -45,7 +45,6 @@ class Plugin(object):
     @abstractmethod
     def run(self):
         """This method must be overridden by the plugin."""
-        pass
 
 
 class PluginRunner(multiprocessing.Process):
@@ -89,7 +88,6 @@ class PluginRunner(multiprocessing.Process):
 
         A Plugin class should exist in the module returned by this method.
         """
-        pass
 
     def _is_plugin(self, obj):
         """Returns whether a given object is a class extending Plugin"""
@@ -248,7 +246,6 @@ class PluginManager(object):
     @abstractmethod
     def _stop_plugin(self, name):
         """This method must be overridden to send a clean shutdown signal."""
-        pass
 
     def process_messages(self):
         """Handles any messages from children"""
