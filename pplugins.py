@@ -108,7 +108,7 @@ class PluginRunner(multiprocessing.Process):
 
         if cls is None:
             raise PluginError("Unable to find a Plugin class (a class "
-                              "subclassing %s)", self.plugin_class,
+                              "subclassing %s)" % self.plugin_class,
                               self.plugin)
 
         return cls
