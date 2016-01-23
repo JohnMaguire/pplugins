@@ -109,16 +109,23 @@ def test_pluginrunner_run_exception(plugin):
     assert 'Unable to find' in str(excinfo.value)
 
 
-@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner_run():
-    # Create mock plugin class and module
-    class MyPlugin(pplugins.Plugin):
+@pytest.fixture(params=["EmptyPlugin", "ErrorPlugin"])
+def plugin(request):
+    class EmptyPlugin(pplugins.Plugin):
         def run(self):
             pass
-    plugin_module = type('Module', (), {'MyPlugin': MyPlugin})
 
+    class ErrorPlugin(pplugins.Plugin):
+        def run(self):
+            raise Exception
+
+    # yeah, yeah, it's eval()
+    return type('Module', (), {request.param: eval(request.param)})
+
+
+@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
+def test_pluginrunner_run(plugin):
     pr = pplugins.PluginRunner(None, None, None)
-
     with patch.object(pplugins.PluginRunner, '_load_plugin',
-                      return_value=plugin_module):
+                      return_value=plugin):
         pr.run()
