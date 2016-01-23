@@ -1,4 +1,3 @@
-import inspect
 import Queue
 
 import pytest
@@ -52,12 +51,12 @@ def test_plugininterface_add_message():
     mock_method.assert_called_once_with(msg)
 
 
-@pytest.mark.parametrize("params,exp_block,exp_timeout", [
+@pytest.mark.parametrize("params,exp_block,exp_timeout", (
     ({}, True, None),
     ({'block': None, 'timeout': None}, None, None),
     ({'block': True, 'timeout': False}, True, False),
     ({'block': False, 'timeout': True}, False, True)
-])
+))
 def test_plugininterface_get_event(params, exp_block, exp_timeout):
     return_value = 'TEST'
     with patch.object(
@@ -89,39 +88,37 @@ def test_pluginrunner_daemon_flag():
     assert pr.daemon is True
 
 
+@pytest.mark.parametrize("plugin", (
+    type('Module', (), {}),
+    # Testing that pplugins.Plugin doesn't count as a valid plugin
+    pplugins,
+))
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner__is_plugin():
-    class Plugin(pplugins.Plugin):
-        pass
+def test_pluginrunner_run_exception(plugin):
+    with patch.object(pplugins.PluginRunner, '_load_plugin',
+                      return_value=plugin) as load_plugin_mock:
+        pr = pplugins.PluginRunner('test', None, None)
+        with pytest.raises(pplugins.PluginError) as excinfo:
+            pr.run()
+
+    # assert the overrided _load_plugin() got called
+    load_plugin_mock.assert_called_once_with()
+
+    # assert that an exception was raised that we were unable to find a plugin
+    assert str(pr.plugin_class) in str(excinfo.value)
+    assert 'Unable to find' in str(excinfo.value)
+
+
+@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
+def test_pluginrunner_run():
+    # Create mock plugin class and module
+    class MyPlugin(pplugins.Plugin):
+        def run(self):
+            pass
+    plugin_module = type('Module', (), {'MyPlugin': MyPlugin})
 
     pr = pplugins.PluginRunner(None, None, None)
 
-    assert pr._is_plugin(pplugins.Plugin) is False
-    assert pr._is_plugin(Plugin) is True
-
-
-@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set(),
-                _load_plugin=lambda _: None)
-def test_pluginrunner__find_plugin_no_plugin_exception():
-    with pytest.raises(pplugins.PluginError) as excinfo:
-        pr = pplugins.PluginRunner('test', None, None)
-        pr._find_plugin()
-
-    assert 'Unable to find a Plugin class' in str(excinfo.value)
-
-
-@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-@patch.object(inspect, 'getmembers', return_value=[(0, "ABC"), (0, "CDE")])
-@patch.object(pplugins.PluginRunner, '_load_plugin', return_value="MODULE")
-def test_pluginrunner__find_plugin(mock_load, mock_getmembers):
-    pr = pplugins.PluginRunner('test', None, None)
-    plugin = pr._find_plugin()
-
-    # make sure it called _load_plugin
-    mock_load.assert_called_once_with()
-
-    # verify it passed _is_plugin and the module returned from _load_plugin
-    mock_getmembers.assert_called_once_with("MODULE", pr._is_plugin)
-
-    # verify it returns the first item from getmembers
-    assert plugin == "ABC"
+    with patch.object(pplugins.PluginRunner, '_load_plugin',
+                      return_value=plugin_module):
+        pr.run()
