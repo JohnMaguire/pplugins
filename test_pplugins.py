@@ -155,14 +155,19 @@ def test_pluginmanager_contextmanager():
 
 
 @patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
-@patch.object(multiprocessing.Process, 'is_alive', return_value=False)
-def test_pluginmanager_reap_plugins(mock_is_alive):
+def test_pluginmanager_reap_plugins():
     pm = pplugins.PluginManager()
-    plugins = pm.plugins
+    plugins = dict(test={'process': multiprocessing.Process()},
+                   **pm.plugins)
 
-    pm.plugins = dict(test={'process': multiprocessing.Process()},
-                      **pm.plugins)
-    pm.reap_plugins()
+    pm.plugins = plugins
+    with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
+        pm.reap_plugins()
 
-    mock_is_alive.assert_called_once_with()
+    assert pm.plugins == {}
+
+    pm.plugins = plugins
+    with patch.object(multiprocessing.Process, 'is_alive', return_value=True):
+        pm.reap_plugins()
+
     assert pm.plugins == plugins
