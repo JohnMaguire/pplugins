@@ -72,12 +72,12 @@ def test_plugininterface_get_event(block, timeout, exp_block, exp_timeout):
 
 
 @patch.multiple(pplugins.Plugin, __abstractmethods__=set())
-def test_plugin_constructor():
+@patch.object(pplugins.Plugin, 'run')
+def test_plugin_constructor(mock_method):
     interface = "TEST"
 
-    with patch.object(pplugins.Plugin, 'run') as mock_method:
-        plugin = pplugins.Plugin(interface)
-        assert plugin.interface == interface
+    plugin = pplugins.Plugin(interface)
+    assert plugin.interface == interface
 
     mock_method.assert_called_once_with()
 
@@ -111,13 +111,12 @@ def test_pluginrunner__is_plugin():
     assert pr._is_plugin(Plugin) is True
 
 
-@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
+@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set(),
+                _load_plugin=lambda _: None)
 def test_pluginrunner__find_plugin_no_plugin_exception():
     with pytest.raises(pplugins.PluginError) as excinfo:
         pr = pplugins.PluginRunner('test', None, None, None)
-        with patch.object(pplugins.PluginRunner, '_load_plugin',
-                          return_value=None):
-            pr._find_plugin()
+        pr._find_plugin()
 
     assert 'Unable to find a Plugin class' in str(excinfo.value)
 

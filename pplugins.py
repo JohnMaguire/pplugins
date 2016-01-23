@@ -70,7 +70,16 @@ class PluginRunner(multiprocessing.Process):
         self.daemon = True
 
     @staticmethod
-    def __monkey_patch_logging(log_queue):
+    def _monkey_patch_logging(log_queue):
+        """Monkeypatches existing loggers and sets the logger class on the
+        logging module to ProcessLogger to ensure all log messages (post-
+        formatting) are sent back over a queue to the parent process, where
+        a thread will maintain loggers for all the children processes to
+        prevent race conditions.
+
+        Keyword arguments:
+            log_queue -- A queue for logs to be sent back over.
+        """
         ProcessLogger.log_queue = log_queue
 
         # Set the logger class for future loggers
@@ -116,7 +125,7 @@ class PluginRunner(multiprocessing.Process):
     def run(self):
         """Instantiates the first Plugin subclass in the plugin's module"""
         # Monkey patch logging so we can log correctly from plugins
-        self.__monkey_patch_logging(self.log_queue)
+        self._monkey_patch_logging(self.log_queue)
 
         self.interface = self.interface(self.event_queue, self.result_queue)
 
