@@ -42,45 +42,16 @@ def test_pluginerror_str_contains_plugin_name():
         assert plugin_name in str(e)
 
 
-def test_plugininterface_add_message():
-    msg = "TEST"
-
-    with patch.object(Queue.Queue, 'put', return_Value=None) as mock_method:
-        queue = Queue.Queue()
-
-        pi = pplugins.PluginInterface(None, queue)
-        pi.add_message(msg)
-
-    mock_method.assert_called_once_with(msg)
-
-
-@pytest.mark.parametrize("params,exp_block,exp_timeout", (
-    ({}, True, None),
-    ({'block': None, 'timeout': None}, None, None),
-    ({'block': True, 'timeout': False}, True, False),
-    ({'block': False, 'timeout': True}, False, True)
-))
-def test_plugininterface_get_event(params, exp_block, exp_timeout):
-    return_value = 'TEST'
-    with patch.object(
-            Queue.Queue, 'get', return_value=return_value) as mock_method:
-        queue = Queue.Queue()
-
-        pi = pplugins.PluginInterface(queue, None)
-        assert pi.get_event(**params) == return_value
-
-    mock_method.assert_called_once_with(exp_block, exp_timeout)
-
-
 @patch.multiple(pplugins.Plugin, __abstractmethods__=set())
 @patch.object(pplugins.Plugin, 'run')
-def test_plugin_constructor(mock_method):
-    interface = "TEST"
-
+def test_plugin_constructor(run_mock):
+    interface = pplugins.PluginInterface(None, None)
     plugin = pplugins.Plugin(interface)
+
+    # Assert that the interface is set on the plugin object
     assert plugin.interface == interface
 
-    mock_method.assert_called_once_with()
+    run_mock.assert_called_once_with()
 
 
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
@@ -161,12 +132,14 @@ def test_pluginmanager_reap_plugins():
     plugins = dict(test={'process': multiprocessing.Process()},
                    **pm.plugins)
 
+    # reap dead processes
     pm.plugins = plugins
     with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
         pm.reap_plugins()
 
     assert pm.plugins == {}
 
+    # don't reap living processes
     pm.plugins = plugins
     with patch.object(multiprocessing.Process, 'is_alive', return_value=True):
         pm.reap_plugins()

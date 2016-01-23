@@ -19,16 +19,8 @@ class PluginError(Exception):
 class PluginInterface(object):
     """Facilitates communication between the plugin and the parent process"""
     def __init__(self, event_queue, message_queue):
-        self.event_queue = event_queue
-        self.message_queue = message_queue
-
-    def add_message(self, result):
-        """Sends a message to the parent to process -- see Queue.put()"""
-        self.message_queue.put(result)
-
-    def get_event(self, block=True, timeout=None):
-        """Receives an event from the parent -- see Queue.get()"""
-        return self.event_queue.get(block, timeout)
+        self.events = event_queue
+        self.messages = message_queue
 
 
 class Plugin(object):
@@ -58,12 +50,12 @@ class PluginRunner(multiprocessing.Process):
     plugin_class = Plugin
     """Plugin class which must be subclassed by plugins"""
 
-    def __init__(self, plugin, event_queue, result_queue):
+    def __init__(self, plugin, event_queue, message_queue):
         super(PluginRunner, self).__init__()
 
         self.plugin = plugin
         self.event_queue = event_queue
-        self.result_queue = result_queue
+        self.message_queue = message_queue
 
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
@@ -101,7 +93,7 @@ class PluginRunner(multiprocessing.Process):
 
     def run(self):
         """Instantiates the first Plugin subclass in the plugin's module"""
-        self.interface = self.interface(self.event_queue, self.result_queue)
+        self.interface = self.interface(self.event_queue, self.message_queue)
 
         cls = self._find_plugin()
 
