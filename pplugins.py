@@ -148,8 +148,6 @@ class PluginManager(object):
         self.logger.info("Starting plugin %s", name)
 
         data = {
-            'name': name,
-
             # Create an input and output queue
             'events': multiprocessing.Queue(),
             'messages': multiprocessing.Queue(),
@@ -199,9 +197,9 @@ class PluginManager(object):
         """Handles any messages from children"""
         self.reap_plugins()
 
-        for plugin in self.plugins:
+        for name, plugin in self.plugins.items():
             while not plugin['messages'].empty():
-                self._process_message(plugin['name'], plugin['messages'].get())
+                self._process_message(name, plugin['messages'].get())
 
     def _process_message(self, plugin, message):
         """This method should be overridden by subclasses.

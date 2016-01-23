@@ -180,3 +180,25 @@ def test_pluginmanager_stop_plugin(stop_plugin_mock, _):
 
     terminate_mock.assert_called_once_with()
     assert pm.plugins == {}
+
+
+@patch.object(pplugins.PluginManager, 'reap_plugins', return_value=None)
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+def test_pluginmanager_process_messages(_):
+    pm = pplugins.PluginManager()
+    queue = Queue.Queue()
+    pm.plugins = {'test': {'messages': queue}}
+
+    # empty queue
+    with patch.object(pplugins.PluginManager, '_process_message',
+                      return_value=None) as process_message_mock:
+        pm.process_messages()
+    process_message_mock.assert_not_called()
+
+    # with a message
+    queue.put('test message')
+    with patch.object(pplugins.PluginManager, '_process_message',
+                      return_value=None) as process_message_mock:
+        pm.process_messages()
+
+    process_message_mock.assert_called_once_with('test', 'test message')
