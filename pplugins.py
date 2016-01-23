@@ -58,38 +58,15 @@ class PluginRunner(multiprocessing.Process):
     plugin_class = Plugin
     """Plugin class which must be subclassed by plugins"""
 
-    def __init__(self, plugin, event_queue, result_queue, log_queue):
+    def __init__(self, plugin, event_queue, result_queue):
         super(PluginRunner, self).__init__()
 
         self.plugin = plugin
         self.event_queue = event_queue
         self.result_queue = result_queue
-        self.log_queue = log_queue
 
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
-
-    @staticmethod
-    def _monkey_patch_logging(log_queue):
-        """Monkeypatches existing loggers and sets the logger class on the
-        logging module to ProcessLogger to ensure all log messages (post-
-        formatting) are sent back over a queue to the parent process, where
-        a thread will maintain loggers for all the children processes to
-        prevent race conditions.
-
-        Keyword arguments:
-            log_queue -- A queue for logs to be sent back over.
-        """
-        ProcessLogger.log_queue = log_queue
-
-        # Set the logger class for future loggers
-        logging.setLoggerClass(ProcessLogger)
-
-        # Monkey patch existing loggers
-        logging.root.__class__ = ProcessLogger
-        for logger in logging.Logger.manager.loggerDict.values():
-            if not isinstance(logger, logging.PlaceHolder):
-                logger.__class__ = ProcessLogger
 
     @abstractmethod
     def _load_plugin(self):
@@ -124,9 +101,6 @@ class PluginRunner(multiprocessing.Process):
 
     def run(self):
         """Instantiates the first Plugin subclass in the plugin's module"""
-        # Monkey patch logging so we can log correctly from plugins
-        self._monkey_patch_logging(self.log_queue)
-
         self.interface = self.interface(self.event_queue, self.result_queue)
 
         cls = self._find_plugin()
@@ -150,38 +124,21 @@ class PluginManager(object):
         self.logger = logging.getLogger(__name__)
 
     def __enter__(self):
-        # Start a thread to manage plugin processes' loggers
-        self.__start_logging_thread()
-
         # Reap plugin processes every 5 seconds
         self.reap_lock = threading.RLock()
-        self.__start_reaping_thread()
+        self._start_reaping_thread()
 
         return self
 
     def __exit__(self, type, value, traceback):
-        self.__stop_logging_thread()
-        self.__stop_reaping_thread()
+        self._stop_reaping_thread()
 
-    def __start_reaping_thread(self):
+    def _start_reaping_thread(self):
         self.reap_timer = threading.Timer(5, self.reap_plugins)
         self.reap_timer.start()
 
-    def __stop_reaping_thread(self):
+    def _stop_reaping_thread(self):
         self.reap_timer.cancel()
-
-    def __start_logging_thread(self):
-        self.log_queue = multiprocessing.Queue()
-        self.log_thread = threading.Thread(target=ProcessLogger.daemon,
-                                           args=(self.log_queue,))
-
-        # Terminate the thread if the main process dies
-        self.log_thread.daemon = True
-
-        self.log_thread.start()
-
-    def __stop_logging_thread(self):
-        self.log_queue.put(None)
 
     def start_plugin(self, name):
         """Attempt to start a new process-based plugin.
@@ -207,7 +164,7 @@ class PluginManager(object):
 
         try:
             data['process'] = self.plugin_runner(
-                name, data['events'], data['messages'], self.log_queue)
+                name, data['events'], data['messages'])
         except Exception:
             self.logger.exception("Unable to create plugin process")
             raise
@@ -295,53 +252,3 @@ class PluginManager(object):
                 continue
 
             yield (name, plugin)
-
-
-class ProcessLogger(logging.Logger):
-    log_queue = None
-
-    def isEnabledFor(self, level):
-        """Accept records of any log level
-
-        logging.Logger will correctly filter out messages of the wrong log
-        level back in the parent process.
-        """
-        return True
-
-    def handle(self, record):
-        """Format the log record and send it through the queue
-
-        We format it here, instead of in the parent where the real logger
-        exists in order to prevent pickling issues over the queue.
-        """
-        # Get exception info into the log message now, so we don't have to
-        # worry about passing the exception info over the queue
-        if record.exc_info:
-            logging._defaultFormatter.format(record)
-            record.exc_info = None
-
-        # Similarly, parse any message arguments now
-        d = dict(record.__dict__)
-        d['msg'] = record.getMessage()
-        d['args'] = None
-
-        # Send the record's properties over the queue so we can log it
-        self.log_queue.put(d)
-
-    @staticmethod
-    def daemon(log_queue):
-        while True:
-            try:
-                record_data = log_queue.get()
-                if record_data is None:
-                    break
-
-                record = logging.makeLogRecord(record_data)
-
-                logger = logging.getLogger(record.name)
-                if logger.isEnabledFor(record.levelno):
-                    logger.handle(record)
-            except EOFError:
-                break
-            except Exception:
-                logging.exception("Error in log handler.")

@@ -24,18 +24,20 @@ def test_plugin_abstract():
         pplugins.Plugin()
 
 
-def test_pluginerror_constructor():
+def test_pluginerror_plugin_property():
     try:
         raise pplugins.PluginError("Generic error", "test")
     except pplugins.PluginError as e:
         assert e.plugin == "test"
 
 
-def test_pluginerror_str():
+def test_pluginerror_str_contains_plugin_name():
+    plugin_name = "test"
+
     try:
-        raise pplugins.PluginError("Generic error", "test")
+        raise pplugins.PluginError(None, plugin_name)
     except pplugins.PluginError as e:
-        assert str(e) == "Generic error (plugin: test)"
+        assert plugin_name in str(e)
 
 
 def test_plugininterface_add_message():
@@ -50,23 +52,20 @@ def test_plugininterface_add_message():
     mock_method.assert_called_once_with(msg)
 
 
-@pytest.mark.parametrize("block,timeout,exp_block,exp_timeout", [
-    (DEFAULT, DEFAULT, True, None),
-    (None, None, None, None),
-    (True, False, True, False),
-    (False, True, False, True)
+@pytest.mark.parametrize("params,exp_block,exp_timeout", [
+    ({}, True, None),
+    ({'block': None, 'timeout': None}, None, None),
+    ({'block': True, 'timeout': False}, True, False),
+    ({'block': False, 'timeout': True}, False, True)
 ])
-def test_plugininterface_get_event(block, timeout, exp_block, exp_timeout):
+def test_plugininterface_get_event(params, exp_block, exp_timeout):
     return_value = 'TEST'
     with patch.object(
             Queue.Queue, 'get', return_value=return_value) as mock_method:
         queue = Queue.Queue()
 
         pi = pplugins.PluginInterface(queue, None)
-        if (block, timeout) == (DEFAULT, DEFAULT):
-            assert pi.get_event() == return_value
-        else:
-            assert pi.get_event(block, timeout) == return_value
+        assert pi.get_event(**params) == return_value
 
     mock_method.assert_called_once_with(exp_block, exp_timeout)
 
@@ -83,18 +82,8 @@ def test_plugin_constructor(mock_method):
 
 
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner_constructor():
-    plugin = "test-plugin"
-    event_queue = "test-events"
-    result_queue = "test-events"
-    log_queue = "test-logs"
-
-    pr = pplugins.PluginRunner(plugin, event_queue, result_queue, log_queue)
-
-    assert pr.plugin == plugin
-    assert pr.event_queue == event_queue
-    assert pr.result_queue == result_queue
-    assert pr.log_queue == log_queue
+def test_pluginrunner_daemon_flag():
+    pr = pplugins.PluginRunner(None, None, None)
 
     # multiprocessing daemon flag
     assert pr.daemon is True
@@ -105,7 +94,7 @@ def test_pluginrunner__is_plugin():
     class Plugin(pplugins.Plugin):
         pass
 
-    pr = pplugins.PluginRunner(None, None, None, None)
+    pr = pplugins.PluginRunner(None, None, None)
 
     assert pr._is_plugin(pplugins.Plugin) is False
     assert pr._is_plugin(Plugin) is True
@@ -115,7 +104,7 @@ def test_pluginrunner__is_plugin():
                 _load_plugin=lambda _: None)
 def test_pluginrunner__find_plugin_no_plugin_exception():
     with pytest.raises(pplugins.PluginError) as excinfo:
-        pr = pplugins.PluginRunner('test', None, None, None)
+        pr = pplugins.PluginRunner('test', None, None)
         pr._find_plugin()
 
     assert 'Unable to find a Plugin class' in str(excinfo.value)
@@ -125,7 +114,7 @@ def test_pluginrunner__find_plugin_no_plugin_exception():
 @patch.object(inspect, 'getmembers', return_value=[(0, "ABC"), (0, "CDE")])
 @patch.object(pplugins.PluginRunner, '_load_plugin', return_value="MODULE")
 def test_pluginrunner__find_plugin(mock_load, mock_getmembers):
-    pr = pplugins.PluginRunner('test', None, None, None)
+    pr = pplugins.PluginRunner('test', None, None)
     plugin = pr._find_plugin()
 
     # make sure it called _load_plugin
