@@ -139,6 +139,7 @@ class PluginManager(object):
 
     def _stop_reaping_thread(self):
         self.reap_timer.cancel()
+        self.reap_timer.join()
 
     def start_plugin(self, name):
         """Attempt to start a new process-based plugin.

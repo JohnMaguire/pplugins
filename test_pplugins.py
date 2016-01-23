@@ -1,3 +1,4 @@
+import threading
 import Queue
 
 import pytest
@@ -129,3 +130,24 @@ def test_pluginrunner_run(plugin):
     with patch.object(pplugins.PluginRunner, '_load_plugin',
                       return_value=plugin):
         pr.run()
+
+
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+def test_pluginmanager_constructor():
+    threads = threading.active_count()
+    pplugins.PluginManager()
+
+    # plugin manager should not have started the reaping thread when called
+    # through the constructor
+    assert threading.active_count() == threads
+
+
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+def test_pluginmanager_contextmanager():
+    threads = threading.active_count()
+    with pplugins.PluginManager():
+        # assert that reaping thread was started
+        assert threading.active_count() == threads + 1
+
+    # assert that reaping thread was stopped
+    assert threading.active_count() == threads
