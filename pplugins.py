@@ -197,17 +197,6 @@ class PluginManager(object):
             self.logger.info("Forcefully killing plugin %s (SIGTERM)", name)
             self.plugins[name]['process'].terminate()
 
-            self.logger.info(
-                "Waiting up to 10 seconds for plugin %s to die", name)
-
-        # Make sure plugin is definitely dead now, or just ignore it
-        self.plugins[name]['process'].join(10)
-        if self.plugins[name]['process'].is_alive():
-            self.logger.error(
-                "Unable to kill plugin %s -- ignoring it", name)
-        else:
-            self.logger.info("Successfully shut down plugin %s", name)
-
         del self.plugins[name]
 
     @abstractmethod

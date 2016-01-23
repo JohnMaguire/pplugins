@@ -1,3 +1,4 @@
+from contextlib import nested
 import multiprocessing
 import threading
 import Queue
@@ -171,3 +172,35 @@ def test_pluginmanager_reap_plugins():
         pm.reap_plugins()
 
     assert pm.plugins == plugins
+
+
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+@patch.object(pplugins.PluginManager, 'reap_plugins', return_value=None)
+@patch.object(pplugins.PluginManager, '_stop_plugin', return_value=None)
+def test_pluginmanager_stop_plugin(stop_plugin_mock, _):
+    pm = pplugins.PluginManager()
+    plugins = dict(test={'process': multiprocessing.Process()},
+                   **pm.plugins)
+
+    # cleanly
+    pm.plugins = plugins
+    with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
+        pm.stop_plugin('test')
+
+    stop_plugin_mock.assert_called_once_with('test')
+    assert pm.plugins == {}
+
+    # forcefully
+    plugins = dict(test={'process': multiprocessing.Process()},
+                   **pm.plugins)
+    pm.plugins = plugins
+    with nested(
+            patch.object(multiprocessing.Process, 'is_alive',
+                         return_value=True),
+            patch.object(multiprocessing.Process, 'terminate',
+                         return_value=None),
+    ) as (_, terminate_mock):
+        pm.stop_plugin('test')
+
+    terminate_mock.assert_called_once_with()
+    assert pm.plugins == {}
