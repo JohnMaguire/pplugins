@@ -182,6 +182,9 @@ def test_pluginmanager_stop_plugin(stop_plugin_mock, _):
     plugins = dict(test={'process': multiprocessing.Process()},
                    **pm.plugins)
 
+    # non-existent plugin
+    pm.stop_plugin('test')
+
     # cleanly
     pm.plugins = plugins
     with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
