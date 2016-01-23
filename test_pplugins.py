@@ -1,3 +1,4 @@
+import multiprocessing
 import threading
 import Queue
 
@@ -96,9 +97,9 @@ def test_pluginrunner_daemon_flag():
 ))
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
 def test_pluginrunner_run_exception(plugin):
+    pr = pplugins.PluginRunner('test', None, None)
     with patch.object(pplugins.PluginRunner, '_load_plugin',
                       return_value=plugin) as load_plugin_mock:
-        pr = pplugins.PluginRunner('test', None, None)
         with pytest.raises(pplugins.PluginError) as excinfo:
             pr.run()
 
@@ -151,3 +152,17 @@ def test_pluginmanager_contextmanager():
 
     # assert that reaping thread was stopped
     assert threading.active_count() == threads
+
+
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+@patch.object(multiprocessing.Process, 'is_alive', return_value=False)
+def test_pluginmanager_reap_plugins(mock_is_alive):
+    pm = pplugins.PluginManager()
+    plugins = pm.plugins
+
+    pm.plugins = dict(test={'process': multiprocessing.Process()},
+                      **pm.plugins)
+    pm.reap_plugins()
+
+    mock_is_alive.assert_called_once_with()
+    assert pm.plugins == plugins

@@ -122,10 +122,10 @@ class PluginManager(object):
     def __init__(self):
         self.plugins = {}
         self.logger = logging.getLogger(__name__)
+        self.reap_lock = threading.RLock()
 
     def __enter__(self):
         # Reap plugin processes every 5 seconds
-        self.reap_lock = threading.RLock()
         self._start_reaping_thread()
 
         return self
