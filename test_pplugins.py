@@ -11,35 +11,17 @@ import pplugins
 DEFAULT = "default"
 
 
-def test_pluginmanager_abstract():
-    with pytest.raises(TypeError):
-        pplugins.PluginManager()
+def test_pluginerror():
+    with pytest.raises(pplugins.PluginError) as exc_info:
+        raise pplugins.PluginError("Generic error", "foo")
 
-
-def test_pluginrunner_abstract():
-    with pytest.raises(TypeError):
-        pplugins.PluginRunner()
+    assert exc_info.value.plugin == "foo"
+    assert "foo" in str(exc_info.value)
 
 
 def test_plugin_abstract():
     with pytest.raises(TypeError):
         pplugins.Plugin()
-
-
-def test_pluginerror_plugin_property():
-    try:
-        raise pplugins.PluginError("Generic error", "test")
-    except pplugins.PluginError as e:
-        assert e.plugin == "test"
-
-
-def test_pluginerror_str_contains_plugin_name():
-    plugin_name = "test"
-
-    try:
-        raise pplugins.PluginError(None, plugin_name)
-    except pplugins.PluginError as e:
-        assert plugin_name in str(e)
 
 
 @patch.multiple(pplugins.Plugin, __abstractmethods__=set())
@@ -54,55 +36,66 @@ def test_plugin_constructor(run_mock):
     run_mock.assert_called_once_with()
 
 
+def test_pluginrunner_abstract():
+    with pytest.raises(TypeError):
+        pplugins.PluginRunner()
+
+
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner_daemon_flag():
+def test_pluginrunner_constructor():
     pr = pplugins.PluginRunner(None, None, None)
 
     # multiprocessing daemon flag
     assert pr.daemon is True
 
 
-@pytest.mark.parametrize("plugin", (
-    type('Module', (), {}),
-    # Testing that pplugins.Plugin doesn't count as a valid plugin
-    pplugins,
-))
+@patch.multiple(pplugins.Plugin, __abstractmethods__=set())
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner_run_exception(plugin):
-    pr = pplugins.PluginRunner('test', None, None)
+def test_pluginrunner_run():
+    pr = pplugins.PluginRunner(None, None, None)
+
+    # assert plugin is called from pluginrunner
+    class PluginStub(pplugins.Plugin):
+        pass
+
+    module = type('Module', (), {'PluginStub': PluginStub})
+
+    with nested(
+            patch.object(pplugins.Plugin, '__init__', return_value=None),
+            patch.object(pplugins.PluginRunner, '_load_plugin',
+                         return_value=module)
+    ) as (_, constructor_mock):
+        pr.run()
+
+    constructor_mock.assert_any_call()
+
+    # ensure exceptions are caught
+    class ErrorPluginStub(pplugins.Plugin):
+        def __init__(self, _):
+            raise Exception
+
+    module = type('Module', (), {'ErrorPluginStub': ErrorPluginStub})
     with patch.object(pplugins.PluginRunner, '_load_plugin',
-                      return_value=plugin) as load_plugin_mock:
+                      return_value=module):
+        pr.run()
+
+    # ensure exception is raised if a plugin can't be found
+    module = type('Module', (), {})
+    with patch.object(pplugins.PluginRunner, '_load_plugin',
+                      return_value=module) as load_plugin_mock:
         with pytest.raises(pplugins.PluginError) as excinfo:
             pr.run()
+
+    assert 'find' in str(excinfo.value)
+    assert str(pr.plugin_class) in str(excinfo.value)
 
     # assert the overrided _load_plugin() got called
     load_plugin_mock.assert_called_once_with()
 
-    # assert that an exception was raised that we were unable to find a plugin
-    assert str(pr.plugin_class) in str(excinfo.value)
-    assert 'Unable to find' in str(excinfo.value)
 
-
-@pytest.fixture(params=["EmptyPlugin", "ErrorPlugin"])
-def plugin(request):
-    class EmptyPlugin(pplugins.Plugin):
-        def run(self):
-            pass
-
-    class ErrorPlugin(pplugins.Plugin):
-        def run(self):
-            raise Exception
-
-    # yeah, yeah, it's eval()
-    return type('Module', (), {request.param: eval(request.param)})
-
-
-@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
-def test_pluginrunner_run(plugin):
-    pr = pplugins.PluginRunner(None, None, None)
-    with patch.object(pplugins.PluginRunner, '_load_plugin',
-                      return_value=plugin):
-        pr.run()
+def test_pluginmanager_abstract():
+    with pytest.raises(TypeError):
+        pplugins.PluginManager()
 
 
 @patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
@@ -124,27 +117,6 @@ def test_pluginmanager_contextmanager():
 
     # assert that reaping thread was stopped
     assert threading.active_count() == threads
-
-
-@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
-def test_pluginmanager_reap_plugins():
-    pm = pplugins.PluginManager()
-    plugins = dict(test={'process': multiprocessing.Process()},
-                   **pm.plugins)
-
-    # reap dead processes
-    pm.plugins = plugins
-    with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
-        pm.reap_plugins()
-
-    assert pm.plugins == {}
-
-    # don't reap living processes
-    pm.plugins = plugins
-    with patch.object(multiprocessing.Process, 'is_alive', return_value=True):
-        pm.reap_plugins()
-
-    assert pm.plugins == plugins
 
 
 @patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
@@ -235,3 +207,24 @@ def test_pluginmanager_process_messages(_):
         pm.process_messages()
 
     process_message_mock.assert_called_once_with('test', 'test message')
+
+
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+def test_pluginmanager_reap_plugins():
+    pm = pplugins.PluginManager()
+    plugins = dict(test={'process': multiprocessing.Process()},
+                   **pm.plugins)
+
+    # reap dead processes
+    pm.plugins = plugins
+    with patch.object(multiprocessing.Process, 'is_alive', return_value=False):
+        pm.reap_plugins()
+
+    assert pm.plugins == {}
+
+    # don't reap living processes
+    pm.plugins = plugins
+    with patch.object(multiprocessing.Process, 'is_alive', return_value=True):
+        pm.reap_plugins()
+
+    assert pm.plugins == plugins
