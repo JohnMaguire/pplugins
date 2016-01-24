@@ -4,6 +4,8 @@ import threading
 import multiprocessing
 from abc import ABCMeta, abstractmethod
 
+from six import add_metaclass
+
 
 class PluginError(Exception):
     """Custom Exception class to store plugin name with exception"""
@@ -23,10 +25,9 @@ class PluginInterface(object):
         self.messages = message_queue
 
 
+@add_metaclass(ABCMeta)
 class Plugin(object):
     """Abstract class for plugins to implement"""
-
-    __metaclass__ = ABCMeta
 
     def __init__(self, interface):
         self.interface = interface
@@ -39,10 +40,9 @@ class Plugin(object):
         """This method must be overridden by the plugin."""
 
 
+@add_metaclass(ABCMeta)
 class PluginRunner(multiprocessing.Process):
     """Finds and runs a plugin. Entry point to the child process."""
-
-    __metaclass__ = ABCMeta
 
     interface = PluginInterface
     """Interface class to instantiate and pass to the plugin"""
@@ -104,10 +104,9 @@ class PluginRunner(multiprocessing.Process):
         """
 
 
+@add_metaclass(ABCMeta)
 class PluginManager(object):
     """Finds, launches, and stops plugins"""
-
-    __metaclass__ = ABCMeta
 
     plugin_runner = PluginRunner
 
