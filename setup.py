@@ -15,6 +15,6 @@ setup(
         'Topic :: Software Development :: Libraries :: Application Frameworks',
     ],
 
-    download_url='https://github.com/JohnMaguire/pplugins/tarball/1.0.0',
-    version='1.0.0'
+    download_url='https://github.com/JohnMaguire/pplugins/tarball/1.0.1',
+    version='1.0.1'
 )
