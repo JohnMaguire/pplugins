@@ -5,12 +5,9 @@
 
 pplugins -- plugins with multiprocessing
 ========================================
-.. image:: https://travis-ci.org/JohnMaguire/pplugins.svg?branch=master
-    :target: https://travis-ci.org/JohnMaguire/pplugins
-.. image:: https://coveralls.io/repos/github/JohnMaguire/pplugins/badge.svg?branch=master
-    :target: https://coveralls.io/github/JohnMaguire/pplugins?branch=master
-
 pplugins is a tiny framework for creating plugin systems that utilize the built-in multiprocessing module.
+
+`View Github Page <https://github.com/JohnMaguire/pplugins>`_
 
 Contents
 --------
