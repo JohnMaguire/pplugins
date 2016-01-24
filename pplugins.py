@@ -60,16 +60,17 @@ class PluginRunner(multiprocessing.Process):
         # Terminate the plugin if the plugin manager terminates
         self.daemon = True
 
-    @abstractmethod
-    def _load_plugin(self):
-        """This method must be overridden to return a Python module.
+    def run(self):
+        """Instantiates the first Plugin subclass in the plugin's module"""
+        interface = self.interface(self.event_queue, self.message_queue)
 
-        A Plugin class should exist in the module returned by this method.
-        """
+        cls = self._find_plugin()
 
-    def _is_plugin(self, obj):
-        """Returns whether a given object is a class extending Plugin"""
-        return inspect.isclass(obj) and self.plugin_class in obj.__bases__
+        try:
+            cls(interface)
+        except:
+            logging.getLogger(__name__).exception(
+                "Error running plugin %s", self.plugin)
 
     def _find_plugin(self):
         """Returns the first Plugin subclass in the plugin module.
@@ -91,17 +92,16 @@ class PluginRunner(multiprocessing.Process):
 
         return cls
 
-    def run(self):
-        """Instantiates the first Plugin subclass in the plugin's module"""
-        self.interface = self.interface(self.event_queue, self.message_queue)
+    def _is_plugin(self, obj):
+        """Returns whether a given object is a class extending Plugin"""
+        return inspect.isclass(obj) and self.plugin_class in obj.__bases__
 
-        cls = self._find_plugin()
+    @abstractmethod
+    def _load_plugin(self):
+        """This method must be overridden to return a Python module.
 
-        try:
-            cls(self.interface)
-        except:
-            logging.getLogger(__name__).exception(
-                "Error running plugin %s", self.plugin)
+        A Plugin class should exist in the module returned by this method.
+        """
 
 
 class PluginManager(object):
@@ -124,14 +124,6 @@ class PluginManager(object):
 
     def __exit__(self, type, value, traceback):
         self._stop_reaping_thread()
-
-    def _start_reaping_thread(self):
-        self.reap_timer = threading.Timer(5, self.reap_plugins)
-        self.reap_timer.start()
-
-    def _stop_reaping_thread(self):
-        self.reap_timer.cancel()
-        self.reap_timer.join()
 
     def start_plugin(self, name):
         """Attempt to start a new process-based plugin.
@@ -189,10 +181,6 @@ class PluginManager(object):
 
         del self.plugins[name]
 
-    @abstractmethod
-    def _stop_plugin(self, name):
-        """This method must be overridden to send a clean shutdown signal."""
-
     def process_messages(self):
         """Handles any messages from children"""
         self.reap_plugins()
@@ -200,18 +188,6 @@ class PluginManager(object):
         for name, plugin in self.plugins.items():
             while not plugin['messages'].empty():
                 self._process_message(name, plugin['messages'].get())
-
-    def _process_message(self, plugin, message):
-        """This method should be overridden by subclasses.
-
-        Processes a message from a plugin.
-
-        Keyword argument:
-            plugin -- The name of the plugin that sent the message
-            message -- Could be any pickle-able object sent from the plugin
-        """
-        raise NotImplementedError(
-            "Subclasses must implement _process_message()")
 
     def reap_plugins(self):
         """Reaps any children processes that terminated"""
@@ -232,3 +208,27 @@ class PluginManager(object):
                 continue
 
             yield (name, plugin)
+
+    def _start_reaping_thread(self):
+        self.reap_timer = threading.Timer(5, self.reap_plugins)
+        self.reap_timer.start()
+
+    def _stop_reaping_thread(self):
+        self.reap_timer.cancel()
+        self.reap_timer.join()
+
+    @abstractmethod
+    def _stop_plugin(self, name):
+        """This method must be overridden to send a clean shutdown signal."""
+
+    def _process_message(self, plugin, message):
+        """This method should be overridden by subclasses.
+
+        Processes a message from a plugin.
+
+        Keyword argument:
+            plugin -- The name of the plugin that sent the message
+            message -- Could be any pickle-able object sent from the plugin
+        """
+        raise NotImplementedError(
+            "Subclasses should implement _process_message()")
