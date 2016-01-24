@@ -17,7 +17,7 @@ class ExamplePlugin(Plugin):
 
         while True:
             try:
-                event = self.interface.get_event(block=False)
+                event = self.interface.events.get(block=False)
             except Queue.Empty:
                 self.logger.info("Child, no message. Waiting .5 seconds")
                 time.sleep(.5)
