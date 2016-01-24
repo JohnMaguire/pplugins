@@ -147,6 +147,39 @@ def test_pluginmanager_reap_plugins():
     assert pm.plugins == plugins
 
 
+@patch.multiple(pplugins.PluginRunner, __abstractmethods__=set())
+@patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
+@patch.object(pplugins.PluginManager, 'reap_plugins', return_value=None)
+@patch.object(multiprocessing.Process, 'start', return_value=None)
+def test_pluginmanager_start_plugin(_, __):
+    pm = pplugins.PluginManager()
+
+    # test starting a plugin
+    class PluginRunnerStub(pplugins.PluginRunner):
+        def run(self):
+            pass
+
+    pm.plugin_runner = PluginRunnerStub
+    pm.start_plugin('foo')
+    assert 'foo' in pm.plugins
+
+    # test plugin already running
+    with pytest.raises(pplugins.PluginError) as excinfo:
+            pm.start_plugin('foo')
+
+    assert 'already running' in str(excinfo.value)
+
+    # test error starting a plugin
+    class PluginRunnerErrorStub(pplugins.PluginRunner):
+        def __init__(self, _, __, ___):
+            raise Exception
+
+    pm.plugin_runner = PluginRunnerErrorStub
+    with nested(patch.multiple(pm, plugins={}),
+                pytest.raises(Exception)):
+            pm.start_plugin('foo')
+
+
 @patch.multiple(pplugins.PluginManager, __abstractmethods__=set())
 @patch.object(pplugins.PluginManager, 'reap_plugins', return_value=None)
 @patch.object(pplugins.PluginManager, '_stop_plugin', return_value=None)
