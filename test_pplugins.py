@@ -1,4 +1,3 @@
-from contextlib import nested
 import multiprocessing
 import threading
 import Queue
@@ -60,11 +59,9 @@ def test_pluginrunner_run():
 
     module = type('Module', (), {'PluginStub': PluginStub})
 
-    with nested(
-            patch.object(pplugins.Plugin, '__init__', return_value=None),
-            patch.object(pplugins.PluginRunner, '_load_plugin',
-                         return_value=module)
-    ) as (_, constructor_mock):
+    with patch.object(pplugins.Plugin, '__init__', return_value=None), \
+        patch.object(pplugins.PluginRunner, '_load_plugin',
+                     return_value=module) as constructor_mock:
         pr.run()
 
     constructor_mock.assert_any_call()
@@ -81,10 +78,10 @@ def test_pluginrunner_run():
 
     # ensure exception is raised if a plugin can't be found
     module = type('Module', (), {})
-    with patch.object(pplugins.PluginRunner, '_load_plugin',
-                      return_value=module) as load_plugin_mock:
-        with pytest.raises(pplugins.PluginError) as excinfo:
-            pr.run()
+    with pytest.raises(pplugins.PluginError) as excinfo, \
+        patch.object(pplugins.PluginRunner, '_load_plugin',
+                     return_value=module) as load_plugin_mock:
+        pr.run()
 
     assert 'find' in str(excinfo.value)
     assert str(pr.plugin_class) in str(excinfo.value)
@@ -147,8 +144,7 @@ def test_pluginmanager_start_plugin(_, __):
             raise Exception
 
     pm.plugin_runner = PluginRunnerErrorStub
-    with nested(patch.multiple(pm, plugins={}),
-                pytest.raises(Exception)):
+    with pytest.raises(Exception), patch.multiple(pm, plugins={}):
             pm.start_plugin('foo')
 
 
@@ -175,12 +171,10 @@ def test_pluginmanager_stop_plugin(stop_plugin_mock, _):
     plugins = dict(test={'process': multiprocessing.Process()},
                    **pm.plugins)
     pm.plugins = plugins
-    with nested(
-            patch.object(multiprocessing.Process, 'is_alive',
-                         return_value=True),
-            patch.object(multiprocessing.Process, 'terminate',
-                         return_value=None),
-    ) as (_, terminate_mock):
+    with patch.object(multiprocessing.Process, 'is_alive',
+                      return_value=True),  \
+        patch.object(multiprocessing.Process, 'terminate',
+                     return_value=None) as terminate_mock:
         pm.stop_plugin('test')
 
     terminate_mock.assert_called_once_with()
