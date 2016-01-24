@@ -194,6 +194,11 @@ def test_pluginmanager_process_messages(_):
         pm.process_messages()
     process_message_mock.assert_not_called()
 
+    # _process_message must be implemented
+    q.put('test message')
+    with pytest.raises(NotImplementedError):
+        pm.process_messages()
+
     # with a message
     q.put('test message')
     with patch.object(pplugins.PluginManager, '_process_message',
